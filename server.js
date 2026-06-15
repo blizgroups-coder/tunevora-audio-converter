@@ -1,6 +1,10 @@
 const path = require("path");
 const fs = require("fs");
-const { convertAudio } = require("./ffmpegService");
+
+const {
+  convertAudio,
+  createAllVersions,
+} = require("./ffmpegService");
 
 const express = require("express");
 const multer = require("multer");
@@ -52,6 +56,38 @@ app.post(
       res.json({
         success: true,
         file: req.file.filename,
+      });
+
+    } catch (e) {
+
+      res.status(500).json({
+        error: e.message,
+      });
+    }
+  }
+);
+
+app.post(
+  "/convert",
+  upload.single("audio"),
+  async (req, res) => {
+
+    try {
+
+      if (!req.file) {
+        return res.status(400).json({
+          error: "No file uploaded",
+        });
+      }
+
+      const result =
+        await createAllVersions(
+          req.file.path
+        );
+
+      res.json({
+        success: true,
+        files: result,
       });
 
     } catch (e) {
