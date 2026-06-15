@@ -6,6 +6,8 @@ const {
   createAllVersions,
 } = require("./ffmpegService");
 
+const { uploadToR2 } = require("./r2Service");
+
 const express = require("express");
 const multer = require("multer");
 
@@ -80,17 +82,49 @@ app.post(
         });
       }
 
-      const result =
-        await createAllVersions(
-          req.file.path
-        );
+      // Create 64k, 128k and 320k versions
+      const result = await createAllVersions(
+        req.file.path
+      );
 
+      // Upload to Cloudflare R2
+      const timestamp = Date.now();
+
+      const freeUrl = await uploadToR2(
+        result.free64,
+        `${timestamp}_64.mp3`
+      );
+
+      const standardUrl = await uploadToR2(
+        result.standard128,
+        `${timestamp}_128.mp3`
+      );
+
+      const premiumUrl = await uploadToR2(
+        result.premium320,
+        `${timestamp}_320.mp3`
+      );
+
+      // Delete temporary files
+      fs.unlinkSync(req.file.path);
+
+      fs.unlinkSync(result.free64);
+      fs.unlinkSync(result.standard128);
+      fs.unlinkSync(result.premium320);
+
+      // Return R2 URLs
       res.json({
         success: true,
-        files: result,
+        files: {
+          free_audio_url: freeUrl,
+          standard_audio_url: standardUrl,
+          premium_audio_url: premiumUrl,
+        },
       });
 
     } catch (e) {
+
+      console.error(e);
 
       res.status(500).json({
         error: e.message,
