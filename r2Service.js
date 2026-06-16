@@ -10,6 +10,8 @@ const s3 = new S3Client({
 
   endpoint: `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
 
+  forcePathStyle: true,
+
   credentials: {
     accessKeyId:
       process.env.R2_ACCESS_KEY_ID,
@@ -23,16 +25,29 @@ async function uploadToR2(
   filePath,
   fileName
 ) {
-
   const fileBuffer =
     fs.readFileSync(filePath);
 
   const key =
     `songs/${fileName}`;
 
+  console.log(
+    "Uploading to bucket:",
+    process.env.R2_BUCKET_NAME
+  );
+
+  console.log(
+    "Key:",
+    key
+  );
+
+  console.log(
+    "Access Key:",
+    process.env.R2_ACCESS_KEY_ID
+  );
+
   await s3.send(
     new PutObjectCommand({
-
       Bucket:
         process.env.R2_BUCKET_NAME,
 
@@ -45,6 +60,11 @@ async function uploadToR2(
       ContentType:
         "audio/mpeg",
     })
+  );
+
+  console.log(
+    "R2 Upload Success:",
+    key
   );
 
   return `${process.env.R2_PUBLIC_URL}/${key}`;
