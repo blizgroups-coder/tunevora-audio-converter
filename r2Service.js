@@ -23,13 +23,16 @@ const s3 = new S3Client({
 
 async function uploadToR2(
   filePath,
-  fileName
+  fileName,
+  folder = "songs",
+  contentType = "audio/mpeg"
 ) {
+
   const fileBuffer =
     fs.readFileSync(filePath);
 
   const key =
-    `songs/${fileName}`;
+    `${folder}/${fileName}`;
 
   console.log(
     "Uploading to bucket:",
@@ -39,11 +42,6 @@ async function uploadToR2(
   console.log(
     "Key:",
     key
-  );
-
-  console.log(
-    "Access Key:",
-    process.env.R2_ACCESS_KEY_ID
   );
 
   await s3.send(
@@ -58,7 +56,7 @@ async function uploadToR2(
         fileBuffer,
 
       ContentType:
-        "audio/mpeg",
+        contentType,
     })
   );
 

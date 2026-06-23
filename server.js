@@ -10,13 +10,28 @@ const { uploadToR2 } = require("./r2Service");
 
 const express = require("express");
 const multer = require("multer");
+const sharp = require("sharp");
 
 const app = express();
 
 const upload = multer({
   dest: "uploads/",
 });
-
+const watermarkSvg = `
+<svg width="500" height="120">
+  <text
+    x="480"
+    y="90"
+    text-anchor="end"
+    fill="white"
+    fill-opacity="0.45"
+    font-size="26"
+    font-weight="bold"
+    font-family="Arial">
+    ♫ Tunevora
+  </text>
+</svg>
+`;
 app.get("/", (req, res) => {
   res.send("Tunevora Audio Converter Running 🎵");
 });
@@ -132,7 +147,55 @@ app.post(
     }
   }
 );
+app.post(
+  "/upload-cover",
+  upload.single("cover"),
+  async (req, res) => {
 
+    try {
+
+      if (!req.file) {
+        return res.status(400).json({
+          error: "No cover uploaded",
+        });
+      }
+
+      const outputPath =
+        `uploads/watermarked_${Date.now()}.jpg`;
+
+      await sharp(req.file.path)
+          .composite([
+            {
+              input: Buffer.from(watermarkSvg),
+              gravity: "southeast",
+            },
+          ])
+          .jpeg({ quality: 90 })
+          .toFile(outputPath);
+
+      const coverUrl = await uploadToR2(
+        outputPath,
+        `cover_${Date.now()}.jpg`
+      );
+
+      fs.unlinkSync(req.file.path);
+      fs.unlinkSync(outputPath);
+
+      res.json({
+        success: true,
+        cover_url: coverUrl,
+      });
+
+    } catch (e) {
+
+      console.error(e);
+
+      res.status(500).json({
+        error: e.message,
+      });
+    }
+  }
+);
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
