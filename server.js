@@ -18,22 +18,22 @@ const upload = multer({
   dest: "uploads/",
 });
 const watermarkSvg = `
-<svg width="500" height="120">
+<svg width="180" height="50">
   <rect
-    x="280"
-    y="55"
-    width="200"
-    height="45"
+    x="0"
+    y="0"
+    width="180"
+    height="50"
     fill="black"
     fill-opacity="0.25"
   />
   <text
-    x="470"
-    y="85"
+    x="170"
+    y="32"
     text-anchor="end"
     fill="white"
     fill-opacity="0.75"
-    font-size="24">
+    font-size="20">
     Tunevora
   </text>
 </svg>
