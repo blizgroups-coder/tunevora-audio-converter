@@ -180,7 +180,9 @@ app.post(
 
       const coverUrl = await uploadToR2(
         outputPath,
-        `cover_${Date.now()}.jpg`
+        `cover_${Date.now()}.jpg`,
+         "songs",
+         "image/jpeg"
       );
 
       fs.unlinkSync(req.file.path);
