@@ -18,23 +18,24 @@ const upload = multer({
   dest: "uploads/",
 });
 const watermarkSvg = `
-<svg width="180" height="50">
+<svg width="250" height="70">
   <rect
     x="0"
     y="0"
-    width="180"
-    height="50"
+    width="250"
+    height="70"
     fill="black"
-    fill-opacity="0.25"
+    fill-opacity="0.35"
   />
   <text
-    x="170"
-    y="32"
+    x="235"
+    y="45"
     text-anchor="end"
     fill="white"
-    fill-opacity="0.75"
-    font-size="20">
-    Tunevora
+    fill-opacity="0.95"
+    font-size="28"
+    font-weight="bold">
+    ♫ Tunevora
   </text>
 </svg>
 `;app.get("/", (req, res) => {
