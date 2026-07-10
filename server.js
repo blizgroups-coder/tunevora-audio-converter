@@ -132,13 +132,29 @@ app.post(
         result.premium320,
         `${timestamp}_320.mp3`
       );
+      
+      
+      let losslessUrl = null;
 
+      if (result.lossless) {
+        losslessUrl = await uploadToR2(
+          result.lossless,
+          `${timestamp}_lossless.flac`,
+          "songs",
+          "audio/flac"
+        );
+      }
+      
       // Delete temporary files
       fs.unlinkSync(req.file.path);
 
       fs.unlinkSync(result.free64);
       fs.unlinkSync(result.standard128);
       fs.unlinkSync(result.premium320);
+
+      if (result.lossless) {
+        fs.unlinkSync(result.lossless);
+      }
 
       // Return R2 URLs
       res.json({
@@ -147,6 +163,11 @@ app.post(
           free_audio_url: freeUrl,
           standard_audio_url: standardUrl,
           premium_audio_url: premiumUrl,
+          lossless_audio_url: losslessUrl,
+
+          master_format: result.masterFormat,
+          master_bit_depth: result.masterBitDepth,
+          master_sample_rate: result.masterSampleRate,
         },
       });
 

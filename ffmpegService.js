@@ -18,6 +18,17 @@ function convertAudio(input, output, bitrate) {
   });
 }
 
+function convertLossless(input, output) {
+  return new Promise((resolve, reject) => {
+    ffmpeg(input)
+      .audioCodec("flac")
+      .format("flac")
+      .on("end", () => resolve(output))
+      .on("error", reject)
+      .save(output);
+  });
+}
+
 /// 🎧 READ ORIGINAL MASTER QUALITY
 function getAudioMetadata(inputFile) {
   return new Promise((resolve, reject) => {
@@ -52,11 +63,13 @@ function getAudioMetadata(inputFile) {
         extension ||
         "unknown";
 
-      const masterBitDepth = Number(
-        audioStream.bits_per_raw_sample ||
-        audioStream.bits_per_sample ||
-        0
-      );
+      const bitDepth =
+       audioStream.bits_per_raw_sample ||
+       audioStream.bits_per_sample;
+
+      const masterBitDepth = bitDepth
+        ? parseInt(bitDepth, 10)
+        : 0;
 
       const masterSampleRate = Number(
         audioStream.sample_rate || 0
@@ -81,6 +94,8 @@ async function createAllVersions(inputFile) {
   const standard128 = `song_${timestamp}_128.mp3`;
   const premium320 = `song_${timestamp}_320.mp3`;
 
+  let lossless = null;
+
   const metadata = await getAudioMetadata(inputFile);
 
   console.log("🎧 MASTER METADATA:", metadata);
@@ -103,10 +118,27 @@ async function createAllVersions(inputFile) {
     "320k"
   );
 
+  const losslessSourceFormats = [
+    "wav",
+    "flac",
+    "aiff",
+    "alac",
+  ];
+
+  if (losslessSourceFormats.includes(metadata.masterFormat)) {
+    lossless = `song_${timestamp}_lossless.flac`;
+
+    await convertLossless(
+      inputFile,
+      lossless
+    );
+  }
+
   return {
     free64,
     standard128,
     premium320,
+    lossless,
 
     masterFormat: metadata.masterFormat,
     masterBitDepth: metadata.masterBitDepth,
@@ -119,6 +151,7 @@ async function createAllVersions(inputFile) {
 
 module.exports = {
   convertAudio,
+  convertLossless,
   getAudioMetadata,
   createAllVersions,
 };
