@@ -103,10 +103,17 @@ app.post(
         });
       }
 
-      // Create 64k, 128k and 320k versions
-      const result = await createAllVersions(
-        req.file.path
-      );
+     const result = await createAllVersions(
+       req.file.path
+     );
+
+     console.log("🎧 MASTER FORMAT:", result.masterFormat);
+     console.log("🎧 BIT DEPTH:", result.masterBitDepth);
+     console.log("🎧 SAMPLE RATE:", result.masterSampleRate);
+     console.log("🎧 CODEC:", result.masterCodec);
+     console.log("🎧 CHANNELS:", result.masterChannels);
+     console.log("🎧 DURATION:", result.duration);
+
 
       // Upload to Cloudflare R2
       const timestamp = Date.now();
