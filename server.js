@@ -245,14 +245,20 @@ app.post(
         `uploads/watermarked_${Date.now()}.jpg`;
 
       await sharp(req.file.path)
-          .composite([
-            {
-              input: Buffer.from(watermarkSvg),
-              gravity: "southeast",
-            },
-          ])
-          .jpeg({ quality: 90 })
-          .toFile(outputPath);
+        .resize(1000, 1000, {
+          fit: "cover",
+          position: "center",
+        })
+        .composite([
+          {
+            input: Buffer.from(watermarkSvg),
+            gravity: "southeast",
+          },
+        ])
+        .jpeg({
+          quality: 90,
+        })
+        .toFile(outputPath);
 
       const coverUrl = await uploadToR2(
         outputPath,
