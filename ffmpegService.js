@@ -29,6 +29,51 @@ function convertLossless(input, output) {
   });
 }
 
+function convertHiRes48(input, output) {
+  return new Promise((resolve, reject) => {
+    ffmpeg(input)
+      .audioCodec("flac")
+      .audioFrequency(48000)
+      .outputOptions([
+        "-sample_fmt s32",
+      ])
+      .format("flac")
+      .on("end", () => resolve(output))
+      .on("error", reject)
+      .save(output);
+  });
+}
+
+function convertHiRes96(input, output) {
+  return new Promise((resolve, reject) => {
+    ffmpeg(input)
+      .audioCodec("flac")
+      .audioFrequency(96000)
+      .outputOptions([
+        "-sample_fmt s32",
+      ])
+      .format("flac")
+      .on("end", () => resolve(output))
+      .on("error", reject)
+      .save(output);
+  });
+}
+
+function convertHiRes192(input, output) {
+  return new Promise((resolve, reject) => {
+    ffmpeg(input)
+      .audioCodec("flac")
+      .audioFrequency(192000)
+      .outputOptions([
+        "-sample_fmt s32",
+      ])
+      .format("flac")
+      .on("end", () => resolve(output))
+      .on("error", reject)
+      .save(output);
+  });
+}
+
 /// 🎧 READ ORIGINAL MASTER QUALITY
 function getAudioMetadata(inputFile) {
   return new Promise((resolve, reject) => {
@@ -95,6 +140,9 @@ async function createAllVersions(inputFile) {
   const premium320 = `song_${timestamp}_320.mp3`;
 
   let lossless = null;
+  let hires48 = null;
+  let hires96 = null;
+  let hires192 = null;
 
   const metadata = await getAudioMetadata(inputFile);
 
@@ -119,26 +167,77 @@ async function createAllVersions(inputFile) {
   );
 
   const losslessSourceFormats = [
-    "wav",
-    "flac",
-    "aiff",
-    "alac",
-  ];
+  "wav",
+  "flac",
+  "aiff",
+];
 
-  if (losslessSourceFormats.includes(metadata.masterFormat)) {
-    lossless = `song_${timestamp}_lossless.flac`;
+const losslessSourceCodecs = [
+  "flac",
+  "alac",
+];
 
-    await convertLossless(
-      inputFile,
-      lossless
-    );
-  }
+const isLosslessSource =
+  losslessSourceFormats.includes(metadata.masterFormat) ||
+  losslessSourceCodecs.includes(metadata.codec) ||
+  metadata.codec.startsWith("pcm_");
+
+if (isLosslessSource) {
+  lossless = `song_${timestamp}_lossless.flac`;
+
+  await convertLossless(
+    inputFile,
+    lossless
+  );
+}
+
+if (
+  isLosslessSource &&
+  metadata.masterBitDepth >= 24 &&
+  metadata.masterSampleRate >= 48000
+) {
+  hires48 = `song_${timestamp}_hires48.flac`;
+
+  await convertHiRes48(
+    inputFile,
+    hires48
+  );
+}
+
+if (
+  isLosslessSource &&
+  metadata.masterBitDepth >= 24 &&
+  metadata.masterSampleRate >= 96000
+) {
+  hires96 = `song_${timestamp}_hires96.flac`;
+
+  await convertHiRes96(
+    inputFile,
+    hires96
+  );
+}
+
+if (
+  isLosslessSource &&
+  metadata.masterBitDepth >= 24 &&
+  metadata.masterSampleRate >= 192000
+) {
+  hires192 = `song_${timestamp}_hires192.flac`;
+
+  await convertHiRes192(
+    inputFile,
+    hires192
+  );
+}
 
   return {
     free64,
     standard128,
     premium320,
     lossless,
+    hires48,
+    hires96,
+    hires192,
 
     masterFormat: metadata.masterFormat,
     masterBitDepth: metadata.masterBitDepth,
@@ -152,6 +251,9 @@ async function createAllVersions(inputFile) {
 module.exports = {
   convertAudio,
   convertLossless,
+  convertHiRes48,
+  convertHiRes96,
+  convertHiRes192,
   getAudioMetadata,
   createAllVersions,
 };

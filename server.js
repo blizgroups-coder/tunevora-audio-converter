@@ -145,8 +145,51 @@ app.post(
         );
       }
       
+      let hires48Url = null;
+      let hires96Url = null;
+      let hires192Url = null;
+
+      if (result.hires48) {
+      hires48Url = await uploadToR2(
+      result.hires48,
+      `${timestamp}_hires48.flac`,
+      "songs",
+      "audio/flac"
+      );
+     }
+
+     if (result.hires96) {
+     hires96Url = await uploadToR2(
+     result.hires96,
+    `${timestamp}_hires96.flac`,
+    "songs",
+    "audio/flac"
+      );
+     }
+
+     if (result.hires192) {
+     hires192Url = await uploadToR2(
+     result.hires192,
+     `${timestamp}_hires192.flac`,
+     "songs",
+     "audio/flac"
+       );
+      }
+      
       // Delete temporary files
       fs.unlinkSync(req.file.path);
+
+      if (result.hires48) {
+      fs.unlinkSync(result.hires48);
+      }
+
+      if (result.hires96) {
+      fs.unlinkSync(result.hires96);
+      }
+
+      if (result.hires192) {
+      fs.unlinkSync(result.hires192);
+      }
 
       fs.unlinkSync(result.free64);
       fs.unlinkSync(result.standard128);
@@ -158,16 +201,20 @@ app.post(
 
       // Return R2 URLs
       res.json({
-        success: true,
-        files: {
-          free_audio_url: freeUrl,
-          standard_audio_url: standardUrl,
-          premium_audio_url: premiumUrl,
-          lossless_audio_url: losslessUrl,
+       success: true,
+       files: {
+         free_audio_url: freeUrl,
+         standard_audio_url: standardUrl,
+         premium_audio_url: premiumUrl,
+         lossless_audio_url: losslessUrl,
 
-          master_format: result.masterFormat,
-          master_bit_depth: result.masterBitDepth,
-          master_sample_rate: result.masterSampleRate,
+         hires48_audio_url: hires48Url,
+         hires96_audio_url: hires96Url,
+         hires192_audio_url: hires192Url,
+
+         master_format: result.masterFormat,
+         master_bit_depth: result.masterBitDepth,
+         master_sample_rate: result.masterSampleRate,
         },
       });
 
