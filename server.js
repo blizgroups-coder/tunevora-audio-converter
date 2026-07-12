@@ -18,27 +18,67 @@ const upload = multer({
   dest: "uploads/",
 });
 const watermarkSvg = `
-<svg width="250" height="70">
+<svg
+  width="360"
+  height="100"
+  viewBox="0 0 360 100"
+  xmlns="http://www.w3.org/2000/svg"
+>
+  <!-- Rounded translucent background -->
   <rect
     x="0"
     y="0"
-    width="250"
-    height="70"
-    fill="black"
-    fill-opacity="0.35"
+    width="360"
+    height="100"
+    rx="28"
+    fill="#000000"
+    fill-opacity="0.48"
   />
-  <text
-    x="235"
-    y="45"
-    text-anchor="end"
+
+  <!-- Tunevora music icon -->
+  <circle
+    cx="55"
+    cy="64"
+    r="15"
+    fill="#E100FF"
+  />
+
+  <circle
+    cx="93"
+    cy="54"
+    r="15"
+    fill="#FF0080"
+  />
+
+  <path
+    d="M68 22
+       L108 12
+       L108 54
+       L98 54
+       L98 28
+       L68 36
+       L68 64
+       L58 64
+       L58 26
+       Z"
     fill="white"
-    fill-opacity="0.95"
-    font-size="28"
-    font-weight="bold">
-    ♫ Tunevora
+  />
+
+  <!-- Tunevora name -->
+  <text
+    x="130"
+    y="64"
+    fill="white"
+    fill-opacity="0.96"
+    font-size="38"
+    font-family="Arial, Helvetica, sans-serif"
+    font-weight="700"
+    letter-spacing="1">
+    Tunevora
   </text>
 </svg>
-`;app.get("/", (req, res) => {
+`;
+app.get("/", (req, res) => {
   res.send("Tunevora Audio Converter Running 🎵");
 });
 
@@ -120,18 +160,24 @@ app.post(
 
       const freeUrl = await uploadToR2(
         result.free64,
-        `${timestamp}_64.mp3`
+        `${timestamp}_64.mp3`,
+        "songs",
+        "audio/mpeg"
       );
 
       const standardUrl = await uploadToR2(
         result.standard128,
-        `${timestamp}_128.mp3`
+        `${timestamp}_128.mp3`,
+        "songs",
+        "audio/mpeg"
       );
 
       const premiumUrl = await uploadToR2(
         result.premium320,
-        `${timestamp}_320.mp3`
-      );
+        `${timestamp}_320.mp3`,
+        "songs",
+        "audio/mpeg"
+        );
       
       
       let losslessUrl = null;
@@ -260,13 +306,13 @@ app.post(
         })
         .toFile(outputPath);
 
-      const coverUrl = await uploadToR2(
-        outputPath,
-        `cover_${Date.now()}.jpg`,
-         "songs",
-         "image/jpeg"
+       const coverUrl = await uploadToR2(
+         outputPath,
+         `cover_${Date.now()}.jpg`,
+          "covers",
+          "image/jpeg"
       );
-
+        
       fs.unlinkSync(req.file.path);
       fs.unlinkSync(outputPath);
 
