@@ -17,64 +17,132 @@ const app = express();
 const upload = multer({
   dest: "uploads/",
 });
-<!-- TUNEVORA as vector lines: no font required -->
-<g
-  transform="translate(125 30)"
-  fill="none"
-  stroke="white"
-  stroke-width="5"
-  stroke-linecap="round"
-  stroke-linejoin="round"
-  opacity="0.96"
+
+const watermarkSvg = `
+<svg
+  width="470"
+  height="120"
+  viewBox="0 0 470 120"
+  xmlns="http://www.w3.org/2000/svg"
 >
-  <!-- T -->
-  <path d="M0 0 H20 M10 0 V36" />
+  <defs>
+    <linearGradient
+      id="tunevoraGradient"
+      x1="0"
+      y1="1"
+      x2="1"
+      y2="0"
+    >
+      <stop offset="0%" stop-color="#4B00FF"/>
+      <stop offset="45%" stop-color="#A600FF"/>
+      <stop offset="100%" stop-color="#FF007A"/>
+    </linearGradient>
 
-  <!-- U -->
-  <path
-    transform="translate(27 0)"
-    d="M0 0 V26 Q0 36 10 36 Q20 36 20 26 V0"
-  />
+    <filter
+      id="softGlow"
+      x="-30%"
+      y="-30%"
+      width="160%"
+      height="160%"
+    >
+      <feGaussianBlur
+        stdDeviation="2.5"
+        result="blur"
+      />
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
 
-  <!-- N -->
-  <path
-    transform="translate(54 0)"
-    d="M0 36 V0 L20 36 V0"
-  />
-
-  <!-- E -->
-  <path
-    transform="translate(81 0)"
-    d="M20 0 H0 V36 H20 M0 18 H16"
-  />
-
-  <!-- V -->
-  <path
-    transform="translate(108 0)"
-    d="M0 0 L10 36 L20 0"
-  />
-
-  <!-- O -->
   <rect
-    x="135"
+    x="0"
     y="0"
-    width="20"
-    height="36"
-    rx="9"
+    width="470"
+    height="120"
+    rx="32"
+    fill="#050510"
+    fill-opacity="0.62"
+    stroke="#FFFFFF"
+    stroke-opacity="0.16"
+    stroke-width="1.5"
   />
 
-  <!-- R -->
-  <path
-    transform="translate(162 0)"
-    d="M0 36 V0 H10 Q20 0 20 9 Q20 18 10 18 H0 M10 18 L22 36"
+  <g
+    transform="translate(22 13)"
+    filter="url(#softGlow)"
+  >
+    <path
+      d="
+        M22 10
+        C22 3 29 0 35 4
+        L92 43
+        C99 48 99 58 92 63
+        L35 101
+        C29 105 22 102 22 94
+        Z
+      "
+      fill="url(#tunevoraGradient)"
+    />
+
+    <path
+      d="
+        M52 31
+        C52 27 56 25 60 28
+        L82 43
+        C86 46 86 52 82 55
+        L60 70
+        C56 73 52 71 52 66
+        Z
+      "
+      fill="#060611"
+    />
+
+    <path
+      d="M63 40 L77 49 L63 58 Z"
+      fill="url(#tunevoraGradient)"
+    />
+
+    <path
+      d="
+        M8 15
+        C8 7 14 2 22 4
+        L34 9
+        C27 14 23 22 23 31
+        L23 91
+        C23 99 18 105 10 106
+        C5 106 2 102 2 97
+        L2 24
+        C2 20 4 17 8 15
+        Z
+      "
+      fill="url(#tunevoraGradient)"
+    />
+  </g>
+
+  <line
+    x1="132"
+    y1="24"
+    x2="132"
+    y2="96"
+    stroke="#FFFFFF"
+    stroke-opacity="0.18"
+    stroke-width="2"
   />
 
-  <!-- A -->
-  <path
-    transform="translate(191 0)"
-    d="M0 36 L10 0 L20 36 M4 23 H16"
-  />
-</g>
+  <text
+    x="155"
+    y="72"
+    font-family="DejaVu Sans, Arial, sans-serif"
+    font-size="48"
+    font-weight="700"
+    letter-spacing="-1"
+    fill="url(#tunevoraGradient)"
+  >
+    Tunevora
+  </text>
+</svg>
 `;
 app.get("/", (req, res) => {
   res.send("Tunevora Audio Converter Running 🎵");
