@@ -64,18 +64,64 @@ const watermarkSvg = `
     fill="white"
   />
 
-  <!-- Tunevora name -->
-  <text
-    x="130"
-    y="64"
-    fill="white"
-    fill-opacity="0.96"
-    font-size="38"
-    font-family="Arial, Helvetica, sans-serif"
-    font-weight="700"
-    letter-spacing="1">
-    Tunevora
-  </text>
+  <!-- TUNEVORA as vector lines: no font required -->
+<g
+  transform="translate(125 30)"
+  fill="none"
+  stroke="white"
+  stroke-width="5"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+  opacity="0.96"
+>
+  <!-- T -->
+  <path d="M0 0 H20 M10 0 V36" />
+
+  <!-- U -->
+  <path
+    transform="translate(27 0)"
+    d="M0 0 V26 Q0 36 10 36 Q20 36 20 26 V0"
+  />
+
+  <!-- N -->
+  <path
+    transform="translate(54 0)"
+    d="M0 36 V0 L20 36 V0"
+  />
+
+  <!-- E -->
+  <path
+    transform="translate(81 0)"
+    d="M20 0 H0 V36 H20 M0 18 H16"
+  />
+
+  <!-- V -->
+  <path
+    transform="translate(108 0)"
+    d="M0 0 L10 36 L20 0"
+  />
+
+  <!-- O -->
+  <rect
+    x="135"
+    y="0"
+    width="20"
+    height="36"
+    rx="9"
+  />
+
+  <!-- R -->
+  <path
+    transform="translate(162 0)"
+    d="M0 36 V0 H10 Q20 0 20 9 Q20 18 10 18 H0 M10 18 L22 36"
+  />
+
+  <!-- A -->
+  <path
+    transform="translate(191 0)"
+    d="M0 36 L10 0 L20 36 M4 23 H16"
+  />
+</g>
 </svg>
 `;
 app.get("/", (req, res) => {
