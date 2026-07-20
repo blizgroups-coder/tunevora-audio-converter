@@ -1,4 +1,3 @@
-```js
 const path = require("path");
 const fs = require("fs");
 
@@ -15,9 +14,66 @@ const sharp = require("sharp");
 
 const app = express();
 
-const upload = multer({
-  dest: "uploads/",
+/*
+|--------------------------------------------------------------------------
+| Upload directory
+|--------------------------------------------------------------------------
+|
+| Railway containers may start without an uploads directory.
+| Create it automatically before Multer starts receiving files.
+|
+*/
+
+const uploadsDirectory = path.join(
+  __dirname,
+  "uploads"
+);
+
+fs.mkdirSync(uploadsDirectory, {
+  recursive: true,
 });
+
+const upload = multer({
+  dest: uploadsDirectory,
+});
+
+/*
+|--------------------------------------------------------------------------
+| Safe temporary-file cleanup
+|--------------------------------------------------------------------------
+|
+| Never allow a missing temporary file to crash the server.
+|
+*/
+
+function safeDeleteFile(filePath) {
+  if (!filePath) {
+    return;
+  }
+
+  try {
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+
+      console.log(
+        "🧹 TEMP FILE DELETED:",
+        filePath
+      );
+    }
+  } catch (error) {
+    console.error(
+      "⚠️ TEMP FILE CLEANUP FAILED:",
+      filePath,
+      error.message
+    );
+  }
+}
+
+/*
+|--------------------------------------------------------------------------
+| Tunevora cover watermark
+|--------------------------------------------------------------------------
+*/
 
 const watermarkSvg = `
 <svg
@@ -179,10 +235,28 @@ app.get("/health", (req, res) => {
 app.get(
   "/convert-test",
   async (req, res) => {
+    const inputPath = path.join(
+      __dirname,
+      "input.mp3"
+    );
+
+    const outputPath = path.join(
+      __dirname,
+      "output_64.mp3"
+    );
+
     try {
+      if (!fs.existsSync(inputPath)) {
+        return res.status(404).json({
+          success: false,
+          error:
+            "input.mp3 was not found in the server folder",
+        });
+      }
+
       await convertAudio(
-        "input.mp3",
-        "output_64.mp3",
+        inputPath,
+        outputPath,
         "64k"
       );
 
@@ -190,10 +264,18 @@ app.get(
         success: true,
         message:
           "Conversion test complete",
+        output_file:
+          path.basename(outputPath),
       });
-    } catch (e) {
+    } catch (error) {
+      console.error(
+        "❌ CONVERSION TEST ERROR:",
+        error
+      );
+
       return res.status(500).json({
-        error: e.message,
+        success: false,
+        error: error.message,
       });
     }
   }
@@ -210,6 +292,7 @@ app.post(
     try {
       if (!req.file) {
         return res.status(400).json({
+          success: false,
           error: "No file uploaded",
         });
       }
@@ -217,10 +300,22 @@ app.post(
       return res.json({
         success: true,
         file: req.file.filename,
+        original_name:
+          req.file.originalname,
+        mime_type:
+          req.file.mimetype,
+        size_bytes:
+          req.file.size,
       });
-    } catch (e) {
+    } catch (error) {
+      console.error(
+        "❌ BASIC UPLOAD ERROR:",
+        error
+      );
+
       return res.status(500).json({
-        error: e.message,
+        success: false,
+        error: error.message,
       });
     }
   }
@@ -234,193 +329,327 @@ app.post(
   "/convert",
   upload.single("audio"),
   async (req, res) => {
+    let result = null;
+
     try {
       if (!req.file) {
         return res.status(400).json({
+          success: false,
           error: "No file uploaded",
         });
       }
 
-      const result =
-        await createAllVersions(
-          req.file.path
-        );
-
       console.log(
-        "🎧 MASTER FORMAT:",
-        result.masterFormat
+        "🎵 AUDIO UPLOAD RECEIVED:",
+        {
+          originalName:
+            req.file.originalname,
+          mimeType:
+            req.file.mimetype,
+          sizeBytes:
+            req.file.size,
+          temporaryPath:
+            req.file.path,
+        }
+      );
+
+      /*
+      |--------------------------------------------------------------------------
+      | Create Tunevora audio versions
+      |--------------------------------------------------------------------------
+      */
+
+      result = await createAllVersions(
+        req.file.path
       );
 
       console.log(
-        "🎧 BIT DEPTH:",
-        result.masterBitDepth
+        "🎧 MASTER METADATA:",
+        {
+          format:
+            result.masterFormat,
+          codec:
+            result.masterCodec,
+          bitDepth:
+            result.masterBitDepth,
+          sampleRate:
+            result.masterSampleRate,
+          channels:
+            result.masterChannels,
+          channelLayout:
+            result.masterChannelLayout,
+          bitRate:
+            result.masterBitRate,
+          duration:
+            result.duration,
+          studioQuality:
+            result.studioQuality,
+        }
       );
 
-      console.log(
-        "🎧 SAMPLE RATE:",
-        result.masterSampleRate
-      );
-
-      console.log(
-        "🎧 CODEC:",
-        result.masterCodec
-      );
-
-      console.log(
-        "🎧 CHANNELS:",
-        result.masterChannels
-      );
-
-      console.log(
-        "🎧 DURATION:",
-        result.duration
-      );
-
-      /* --------------------------------------------- */
-      /* Upload generated audio files to Cloudflare R2 */
-      /* --------------------------------------------- */
+      /*
+      |--------------------------------------------------------------------------
+      | Upload generated files to Cloudflare R2
+      |--------------------------------------------------------------------------
+      */
 
       const timestamp = Date.now();
 
-      const freeUrl = await uploadToR2(
-        result.free64,
-        `${timestamp}_64.mp3`,
-        "songs",
-        "audio/mpeg"
-      );
-
-      const standardUrl =
+      /*
+       * Free plan:
+       * AAC 128 kbps.
+       */
+      const aac128Url =
         await uploadToR2(
-          result.standard128,
-          `${timestamp}_128.mp3`,
+          result.aac128,
+          `${timestamp}_aac128.m4a`,
+          "songs",
+          "audio/mp4"
+        );
+
+      /*
+       * Standard plan:
+       * MP3 320 kbps.
+       */
+      const mp3320Url =
+        await uploadToR2(
+          result.mp3320,
+          `${timestamp}_mp3320.mp3`,
           "songs",
           "audio/mpeg"
         );
 
-      const premiumUrl =
-        await uploadToR2(
-          result.premium320,
-          `${timestamp}_320.mp3`,
-          "songs",
-          "audio/mpeg"
-        );
-
+      /*
+       * Lossless exists only when the artist uploaded
+       * a genuine lossless source.
+       */
       let losslessUrl = null;
 
       if (result.lossless) {
-        losslessUrl = await uploadToR2(
-          result.lossless,
-          `${timestamp}_lossless.flac`,
-          "songs",
-          "audio/flac"
-        );
+        losslessUrl =
+          await uploadToR2(
+            result.lossless,
+            `${timestamp}_lossless.flac`,
+            "songs",
+            "audio/flac"
+          );
       }
 
-      let hires48Url = null;
-      let hires96Url = null;
-      let hires192Url = null;
+      /*
+       * Hi-Res exists only when the original master is:
+       *
+       * - Lossless
+       * - At least 24-bit
+       * - Above 48 kHz
+       */
+      let hiresUrl = null;
 
-      if (result.hires48) {
-        hires48Url = await uploadToR2(
-          result.hires48,
-          `${timestamp}_hires48.flac`,
-          "songs",
-          "audio/flac"
-        );
+      if (result.hires) {
+        hiresUrl =
+          await uploadToR2(
+            result.hires,
+            `${timestamp}_hires_${result.masterSampleRate}.flac`,
+            "songs",
+            "audio/flac"
+          );
       }
 
-      if (result.hires96) {
-        hires96Url = await uploadToR2(
-          result.hires96,
-          `${timestamp}_hires96.flac`,
-          "songs",
-          "audio/flac"
-        );
-      }
+      /*
+      |--------------------------------------------------------------------------
+      | Preserve existing Flutter and Supabase field names
+      |--------------------------------------------------------------------------
+      |
+      | free_audio_url:
+      | AAC 128 kbps
+      |
+      | standard_audio_url:
+      | MP3 320 kbps
+      |
+      | premium_audio_url:
+      | Hi-Res first, then Lossless, then MP3 fallback
+      |
+      */
 
-      if (result.hires192) {
-        hires192Url = await uploadToR2(
-          result.hires192,
-          `${timestamp}_hires192.flac`,
-          "songs",
-          "audio/flac"
-        );
-      }
+      const freeAudioUrl =
+        aac128Url;
 
-      /* --------------------------------------------- */
-      /* Delete temporary local audio files            */
-      /* --------------------------------------------- */
+      const standardAudioUrl =
+        mp3320Url;
 
-      fs.unlinkSync(req.file.path);
+      const premiumAudioUrl =
+        hiresUrl ||
+        losslessUrl ||
+        mp3320Url;
 
-      if (result.hires48) {
-        fs.unlinkSync(result.hires48);
-      }
+      /*
+      |--------------------------------------------------------------------------
+      | Return Cloudflare R2 URLs and master verification data
+      |--------------------------------------------------------------------------
+      */
 
-      if (result.hires96) {
-        fs.unlinkSync(result.hires96);
-      }
-
-      if (result.hires192) {
-        fs.unlinkSync(result.hires192);
-      }
-
-      fs.unlinkSync(result.free64);
-      fs.unlinkSync(result.standard128);
-      fs.unlinkSync(result.premium320);
-
-      if (result.lossless) {
-        fs.unlinkSync(result.lossless);
-      }
-
-      /* --------------------------------------------- */
-      /* Return Cloudflare R2 URLs                     */
-      /* --------------------------------------------- */
-
-      return res.json({
+      return res.status(200).json({
         success: true,
 
         files: {
+          /*
+           * Existing app-compatible fields.
+           */
           free_audio_url:
-            freeUrl,
+            freeAudioUrl,
 
           standard_audio_url:
-            standardUrl,
+            standardAudioUrl,
 
           premium_audio_url:
-            premiumUrl,
+            premiumAudioUrl,
+
+          /*
+           * New permanent quality fields.
+           */
+          aac128_audio_url:
+            aac128Url,
+
+          mp3320_audio_url:
+            mp3320Url,
 
           lossless_audio_url:
             losslessUrl,
 
+          hires_audio_url:
+            hiresUrl,
+
+          /*
+           * Old Hi-Res fields retained temporarily
+           * for compatibility.
+           */
           hires48_audio_url:
-            hires48Url,
+            result.masterSampleRate ===
+              48000
+              ? hiresUrl
+              : null,
 
           hires96_audio_url:
-            hires96Url,
+            result.masterSampleRate ===
+              96000
+              ? hiresUrl
+              : null,
 
           hires192_audio_url:
-            hires192Url,
+            result.masterSampleRate ===
+              192000
+              ? hiresUrl
+              : null,
 
+          /*
+           * Original master metadata.
+           */
           master_format:
             result.masterFormat,
+
+          master_codec:
+            result.masterCodec,
 
           master_bit_depth:
             result.masterBitDepth,
 
           master_sample_rate:
             result.masterSampleRate,
+
+          master_channels:
+            result.masterChannels,
+
+          master_channel_layout:
+            result.masterChannelLayout,
+
+          master_bit_rate:
+            result.masterBitRate,
+
+          duration_seconds:
+            result.duration,
+
+          /*
+           * Verification results.
+           */
+          verified_master:
+            result.verifiedMaster,
+
+          verified_lossless:
+            result.verifiedLossless,
+
+          verified_hires:
+            result.verifiedHiRes,
+
+          verified_dolby_atmos:
+            result.verifiedDolbyAtmos,
+
+          verified_sony_360:
+            result.verifiedSony360,
+
+          studio_quality:
+            result.studioQuality,
+
+          processing_version:
+            result.processingVersion,
+
+          /*
+           * Future immersive audio fields.
+           */
+          dolby_atmos_audio_url:
+            null,
+
+          sony360_audio_url:
+            null,
+
+          binaural_audio_url:
+            null,
+
+          immersive_audio_url:
+            null,
         },
       });
-    } catch (e) {
+    } catch (error) {
       console.error(
         "❌ AUDIO CONVERSION ERROR:",
-        e
+        error
       );
 
       return res.status(500).json({
-        error: e.message,
+        success: false,
+        error: error.message,
       });
+    } finally {
+      /*
+      |--------------------------------------------------------------------------
+      | Always remove temporary local files
+      |--------------------------------------------------------------------------
+      |
+      | This runs after success and after failure.
+      |
+      */
+
+      if (result) {
+        safeDeleteFile(
+          result.aac128
+        );
+
+        safeDeleteFile(
+          result.mp3320
+        );
+
+        safeDeleteFile(
+          result.lossless
+        );
+
+        safeDeleteFile(
+          result.hires
+        );
+      }
+
+      if (req.file) {
+        safeDeleteFile(
+          req.file.path
+        );
+      }
     }
   }
 );
@@ -433,15 +662,20 @@ app.post(
   "/upload-cover",
   upload.single("cover"),
   async (req, res) => {
+    let outputPath = null;
+
     try {
       if (!req.file) {
         return res.status(400).json({
+          success: false,
           error: "No cover uploaded",
         });
       }
 
-      const outputPath =
-        `uploads/watermarked_${Date.now()}.jpg`;
+      outputPath = path.join(
+        uploadsDirectory,
+        `watermarked_${Date.now()}.jpg`
+      );
 
       await sharp(req.file.path)
         .resize(1000, 1000, {
@@ -451,7 +685,9 @@ app.post(
         .composite([
           {
             input:
-              Buffer.from(watermarkSvg),
+              Buffer.from(
+                watermarkSvg
+              ),
 
             gravity: "southeast",
           },
@@ -469,22 +705,30 @@ app.post(
           "image/jpeg"
         );
 
-      fs.unlinkSync(req.file.path);
-      fs.unlinkSync(outputPath);
-
-      return res.json({
+      return res.status(200).json({
         success: true,
         cover_url: coverUrl,
       });
-    } catch (e) {
+    } catch (error) {
       console.error(
         "❌ COVER UPLOAD ERROR:",
-        e
+        error
       );
 
       return res.status(500).json({
-        error: e.message,
+        success: false,
+        error: error.message,
       });
+    } finally {
+      if (req.file) {
+        safeDeleteFile(
+          req.file.path
+        );
+      }
+
+      safeDeleteFile(
+        outputPath
+      );
     }
   }
 );
@@ -501,6 +745,10 @@ const server = app.listen(
   () => {
     console.log(
       `🚀 Tunevora Audio Server running on port ${PORT}`
+    );
+
+    console.log(
+      `📁 Temporary upload directory: ${uploadsDirectory}`
     );
   }
 );
@@ -555,4 +803,3 @@ process.on("SIGTERM", () => {
 process.on("SIGINT", () => {
   gracefulShutdown("SIGINT");
 });
-```
