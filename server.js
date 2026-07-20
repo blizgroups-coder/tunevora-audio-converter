@@ -2,11 +2,14 @@ const path = require("path");
 const fs = require("fs");
 
 const {
+  PROCESSING_VERSION,
   convertAudio,
   createAllVersions,
 } = require("./ffmpegService");
 
-const { uploadToR2 } = require("./r2Service");
+const {
+  uploadToR2,
+} = require("./r2Service");
 
 const express = require("express");
 const multer = require("multer");
@@ -16,11 +19,64 @@ const app = express();
 
 /*
 |--------------------------------------------------------------------------
-| Upload directory
+| Tunevora Audio Server V2
 |--------------------------------------------------------------------------
 |
-| Railway containers may start without an uploads directory.
-| Create it automatically before Multer starts receiving files.
+| Streaming plans:
+|
+| Free:
+| - AAC 64 kbps
+|
+| Standard:
+| - AAC 128 kbps
+|
+| Premium:
+| - MP3 320 kbps
+|
+| Studio qualities:
+|
+| - Genuine Lossless FLAC
+| - Genuine Hi-Res FLAC
+|
+| Important:
+|
+| - Lossless is only created from a genuine lossless master.
+| - Hi-Res is only created from a genuine 24-bit source above 48 kHz.
+| - Premium MP3 does not falsely claim to improve a low-quality source.
+|
+*/
+
+const SERVER_VERSION =
+  "tunevora-audio-server-v2.0.0";
+
+/*
+|--------------------------------------------------------------------------
+| Express configuration
+|--------------------------------------------------------------------------
+*/
+
+app.disable("x-powered-by");
+
+app.use(
+  express.json({
+    limit: "2mb",
+  })
+);
+
+app.use(
+  express.urlencoded({
+    extended: true,
+    limit: "2mb",
+  })
+);
+
+/*
+|--------------------------------------------------------------------------
+| Temporary upload directory
+|--------------------------------------------------------------------------
+|
+| Railway containers may start without the directory.
+| Create it before Multer starts handling uploads.
 |
 */
 
@@ -33,18 +89,84 @@ fs.mkdirSync(uploadsDirectory, {
   recursive: true,
 });
 
+/*
+|--------------------------------------------------------------------------
+| Multer upload configuration
+|--------------------------------------------------------------------------
+*/
+
+const MAX_AUDIO_UPLOAD_SIZE =
+  500 * 1024 * 1024;
+
+const MAX_COVER_UPLOAD_SIZE =
+  15 * 1024 * 1024;
+
 const upload = multer({
   dest: uploadsDirectory,
+
+  limits: {
+    fileSize:
+      MAX_AUDIO_UPLOAD_SIZE,
+    files: 1,
+  },
+});
+
+const coverUpload = multer({
+  dest: uploadsDirectory,
+
+  limits: {
+    fileSize:
+      MAX_COVER_UPLOAD_SIZE,
+    files: 1,
+  },
 });
 
 /*
 |--------------------------------------------------------------------------
-| Safe temporary-file cleanup
+| Supported upload types
 |--------------------------------------------------------------------------
-|
-| Never allow a missing temporary file to crash the server.
-|
 */
+
+const SUPPORTED_AUDIO_EXTENSIONS =
+  new Set([
+    ".mp3",
+    ".m4a",
+    ".aac",
+    ".wav",
+    ".wave",
+    ".flac",
+    ".aif",
+    ".aiff",
+    ".alac",
+    ".ogg",
+    ".opus",
+  ]);
+
+const SUPPORTED_COVER_EXTENSIONS =
+  new Set([
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".webp",
+  ]);
+
+/*
+|--------------------------------------------------------------------------
+| Helper functions
+|--------------------------------------------------------------------------
+*/
+
+function fileExists(filePath) {
+  if (!filePath) {
+    return false;
+  }
+
+  try {
+    return fs.existsSync(filePath);
+  } catch (_) {
+    return false;
+  }
+}
 
 function safeDeleteFile(filePath) {
   if (!filePath) {
@@ -69,6 +191,113 @@ function safeDeleteFile(filePath) {
   }
 }
 
+function sanitizeFileName(value) {
+  return String(value || "file")
+    .replace(/[^a-zA-Z0-9._-]/g, "_")
+    .replace(/_+/g, "_")
+    .slice(0, 160);
+}
+
+function getFileExtension(fileName) {
+  return path
+    .extname(fileName || "")
+    .toLowerCase();
+}
+
+function validateAudioUpload(file) {
+  if (!file) {
+    throw new Error(
+      "No audio file was uploaded"
+    );
+  }
+
+  const extension =
+    getFileExtension(
+      file.originalname
+    );
+
+  if (
+    !SUPPORTED_AUDIO_EXTENSIONS
+      .has(extension)
+  ) {
+    throw new Error(
+      `Unsupported audio format: ${
+        extension || "unknown"
+      }`
+    );
+  }
+
+  if (
+    !fileExists(file.path) ||
+    file.size <= 0
+  ) {
+    throw new Error(
+      "Uploaded audio file is empty or unavailable"
+    );
+  }
+
+  return true;
+}
+
+function validateCoverUpload(file) {
+  if (!file) {
+    throw new Error(
+      "No cover artwork was uploaded"
+    );
+  }
+
+  const extension =
+    getFileExtension(
+      file.originalname
+    );
+
+  if (
+    !SUPPORTED_COVER_EXTENSIONS
+      .has(extension)
+  ) {
+    throw new Error(
+      `Unsupported cover format: ${
+        extension || "unknown"
+      }`
+    );
+  }
+
+  if (
+    !fileExists(file.path) ||
+    file.size <= 0
+  ) {
+    throw new Error(
+      "Uploaded cover artwork is empty or unavailable"
+    );
+  }
+
+  return true;
+}
+
+function createUploadId() {
+  return (
+    `${Date.now()}_` +
+    Math.random()
+      .toString(36)
+      .slice(2, 10)
+  );
+}
+
+function createPublicError(
+  error,
+  fallbackMessage
+) {
+  if (
+    error &&
+    typeof error.message === "string" &&
+    error.message.trim().length > 0
+  ) {
+    return error.message;
+  }
+
+  return fallbackMessage;
+}
+
 /*
 |--------------------------------------------------------------------------
 | Tunevora cover watermark
@@ -90,9 +319,20 @@ const watermarkSvg = `
       x2="1"
       y2="0"
     >
-      <stop offset="0%" stop-color="#4B00FF"/>
-      <stop offset="45%" stop-color="#A600FF"/>
-      <stop offset="100%" stop-color="#FF007A"/>
+      <stop
+        offset="0%"
+        stop-color="#4B00FF"
+      />
+
+      <stop
+        offset="45%"
+        stop-color="#A600FF"
+      />
+
+      <stop
+        offset="100%"
+        stop-color="#FF007A"
+      />
     </linearGradient>
 
     <filter
@@ -106,9 +346,12 @@ const watermarkSvg = `
         stdDeviation="2.5"
         result="blur"
       />
+
       <feMerge>
         <feMergeNode in="blur"/>
-        <feMergeNode in="SourceGraphic"/>
+        <feMergeNode
+          in="SourceGraphic"
+        />
       </feMerge>
     </filter>
   </defs>
@@ -202,56 +445,97 @@ const watermarkSvg = `
 </svg>
 `;
 
-/* ===================================================== */
-/* 🎵 ROOT ROUTE                                         */
-/* ===================================================== */
+/*
+|--------------------------------------------------------------------------
+| Root route
+|--------------------------------------------------------------------------
+*/
 
 app.get("/", (req, res) => {
-  res.send(
-    "Tunevora Audio Converter Running 🎵"
-  );
-});
-
-/* ===================================================== */
-/* ❤️ PRODUCTION HEALTH CHECK                            */
-/* ===================================================== */
-
-app.get("/health", (req, res) => {
-  res.status(200).json({
+  return res.status(200).json({
     success: true,
-    service: "tunevora-audio-server",
-    status: "healthy",
-    uptime_seconds: Math.floor(
-      process.uptime()
-    ),
-    timestamp: new Date().toISOString(),
+    message:
+      "Tunevora Audio Converter Running 🎵",
+    service:
+      "tunevora-audio-server",
+    server_version:
+      SERVER_VERSION,
+    processing_version:
+      PROCESSING_VERSION,
   });
 });
 
-/* ===================================================== */
-/* 🧪 CONVERSION TEST                                    */
-/* ===================================================== */
+/*
+|--------------------------------------------------------------------------
+| Production health check
+|--------------------------------------------------------------------------
+*/
+
+app.get("/health", (req, res) => {
+  return res.status(200).json({
+    success: true,
+    service:
+      "tunevora-audio-server",
+    server_version:
+      SERVER_VERSION,
+    processing_version:
+      PROCESSING_VERSION,
+    status: "healthy",
+
+    uptime_seconds:
+      Math.floor(
+        process.uptime()
+      ),
+
+    memory: {
+      rss_bytes:
+        process.memoryUsage().rss,
+
+      heap_used_bytes:
+        process.memoryUsage()
+          .heapUsed,
+
+      heap_total_bytes:
+        process.memoryUsage()
+          .heapTotal,
+    },
+
+    timestamp:
+      new Date().toISOString(),
+  });
+});
+
+/*
+|--------------------------------------------------------------------------
+| Audio conversion test
+|--------------------------------------------------------------------------
+*/
 
 app.get(
   "/convert-test",
   async (req, res) => {
-    const inputPath = path.join(
-      __dirname,
-      "input.mp3"
-    );
+    const inputPath =
+      path.join(
+        __dirname,
+        "input.mp3"
+      );
 
-    const outputPath = path.join(
-      __dirname,
-      "output_64.mp3"
-    );
+    const outputPath =
+      path.join(
+        __dirname,
+        "output_64.mp3"
+      );
 
     try {
       if (!fs.existsSync(inputPath)) {
-        return res.status(404).json({
-          success: false,
-          error:
-            "input.mp3 was not found in the server folder",
-        });
+        return res
+          .status(404)
+          .json({
+            success: false,
+
+            error:
+              "input.mp3 was not found in the server folder",
+          });
       }
 
       await convertAudio(
@@ -260,12 +544,16 @@ app.get(
         "64k"
       );
 
-      return res.json({
+      return res.status(200).json({
         success: true,
+
         message:
           "Conversion test complete",
+
         output_file:
-          path.basename(outputPath),
+          path.basename(
+            outputPath
+          ),
       });
     } catch (error) {
       console.error(
@@ -275,35 +563,44 @@ app.get(
 
       return res.status(500).json({
         success: false,
-        error: error.message,
+
+        error:
+          createPublicError(
+            error,
+            "Conversion test failed"
+          ),
       });
     }
   }
 );
 
-/* ===================================================== */
-/* 📤 BASIC AUDIO UPLOAD TEST                            */
-/* ===================================================== */
+/*
+|--------------------------------------------------------------------------
+| Basic audio upload test
+|--------------------------------------------------------------------------
+*/
 
 app.post(
   "/upload",
   upload.single("audio"),
   async (req, res) => {
     try {
-      if (!req.file) {
-        return res.status(400).json({
-          success: false,
-          error: "No file uploaded",
-        });
-      }
+      validateAudioUpload(
+        req.file
+      );
 
-      return res.json({
+      return res.status(200).json({
         success: true,
-        file: req.file.filename,
+
+        file:
+          req.file.filename,
+
         original_name:
           req.file.originalname,
+
         mime_type:
           req.file.mimetype,
+
         size_bytes:
           req.file.size,
       });
@@ -313,17 +610,30 @@ app.post(
         error
       );
 
-      return res.status(500).json({
+      return res.status(400).json({
         success: false,
-        error: error.message,
+
+        error:
+          createPublicError(
+            error,
+            "Audio upload failed"
+          ),
       });
+    } finally {
+      if (req.file) {
+        safeDeleteFile(
+          req.file.path
+        );
+      }
     }
   }
 );
 
-/* ===================================================== */
-/* 🎧 AUDIO CONVERSION                                   */
-/* ===================================================== */
+/*
+|--------------------------------------------------------------------------
+| Main audio conversion route
+|--------------------------------------------------------------------------
+*/
 
 app.post(
   "/convert",
@@ -331,169 +641,261 @@ app.post(
   async (req, res) => {
     let result = null;
 
+    const requestStartedAt =
+      Date.now();
+
+    const uploadId =
+      createUploadId();
+
     try {
-      if (!req.file) {
-        return res.status(400).json({
-          success: false,
-          error: "No file uploaded",
-        });
-      }
+      validateAudioUpload(
+        req.file
+      );
 
       console.log(
-        "🎵 AUDIO UPLOAD RECEIVED:",
-        {
-          originalName:
-            req.file.originalname,
-          mimeType:
-            req.file.mimetype,
-          sizeBytes:
-            req.file.size,
-          temporaryPath:
-            req.file.path,
-        }
+        "========================================"
+      );
+
+      console.log(
+        "🎵 TUNEVORA AUDIO UPLOAD RECEIVED"
+      );
+
+      console.log({
+        uploadId,
+
+        originalName:
+          req.file.originalname,
+
+        safeOriginalName:
+          sanitizeFileName(
+            req.file.originalname
+          ),
+
+        mimeType:
+          req.file.mimetype,
+
+        sizeBytes:
+          req.file.size,
+
+        temporaryPath:
+          req.file.path,
+      });
+
+      console.log(
+        "========================================"
       );
 
       /*
       |--------------------------------------------------------------------------
-      | Create Tunevora audio versions
+      | Generate Tunevora V2 audio versions
       |--------------------------------------------------------------------------
       */
 
-      result = await createAllVersions(
-        req.file.path
-      );
+      result =
+        await createAllVersions(
+          req.file.path
+        );
 
       console.log(
-        "🎧 MASTER METADATA:",
+        "🎧 MASTER ANALYSIS:",
         {
+          uploadId,
+
           format:
             result.masterFormat,
+
           codec:
             result.masterCodec,
+
+          codecLongName:
+            result
+              .masterCodecLongName,
+
           bitDepth:
             result.masterBitDepth,
+
           sampleRate:
             result.masterSampleRate,
+
           channels:
             result.masterChannels,
+
           channelLayout:
-            result.masterChannelLayout,
+            result
+              .masterChannelLayout,
+
           bitRate:
             result.masterBitRate,
-          duration:
+
+          bitRateKbps:
+            result
+              .masterBitRateKbps,
+
+          durationSeconds:
             result.duration,
+
+          fileSize:
+            result.masterFileSize,
+
+          sha256:
+            result.masterSha256,
+
           studioQuality:
             result.studioQuality,
+
+          studioQualityLabel:
+            result
+              .studioQualityLabel,
+
+          premiumSourceVerified:
+            result
+              .premiumSourceVerified,
         }
       );
 
       /*
       |--------------------------------------------------------------------------
-      | Upload generated files to Cloudflare R2
+      | Upload all generated audio versions to Cloudflare R2
       |--------------------------------------------------------------------------
       */
 
-      const timestamp = Date.now();
+      const r2BaseName =
+        `${uploadId}_` +
+        sanitizeFileName(
+          path.basename(
+            req.file.originalname,
+            path.extname(
+              req.file.originalname
+            )
+          )
+        );
 
       /*
        * Free plan:
-       * AAC 128 kbps.
+       * AAC 64 kbps.
        */
-      const aac128Url =
+
+      const freeAac64Url =
         await uploadToR2(
-          result.aac128,
-          `${timestamp}_aac128.m4a`,
-          "songs",
+          result.freeAac64,
+          `${r2BaseName}_free_aac64.m4a`,
+          "songs/free",
           "audio/mp4"
         );
 
       /*
        * Standard plan:
+       * AAC 128 kbps.
+       */
+
+      const standardAac128Url =
+        await uploadToR2(
+          result.standardAac128,
+          `${r2BaseName}_standard_aac128.m4a`,
+          "songs/standard",
+          "audio/mp4"
+        );
+
+      /*
+       * Premium plan:
        * MP3 320 kbps.
        */
-      const mp3320Url =
+
+      const premiumMp3320Url =
         await uploadToR2(
-          result.mp3320,
-          `${timestamp}_mp3320.mp3`,
-          "songs",
+          result.premiumMp3320,
+          `${r2BaseName}_premium_mp3320.mp3`,
+          "songs/premium",
           "audio/mpeg"
         );
 
       /*
-       * Lossless exists only when the artist uploaded
-       * a genuine lossless source.
+       * Genuine Lossless:
+       * Created only from a real lossless source.
        */
+
       let losslessUrl = null;
 
       if (result.lossless) {
         losslessUrl =
           await uploadToR2(
             result.lossless,
-            `${timestamp}_lossless.flac`,
-            "songs",
+            `${r2BaseName}_lossless.flac`,
+            "songs/lossless",
             "audio/flac"
           );
       }
 
       /*
-       * Hi-Res exists only when the original master is:
-       *
-       * - Lossless
-       * - At least 24-bit
-       * - Above 48 kHz
+       * Genuine Hi-Res:
+       * Created only from a genuine qualifying master.
        */
+
       let hiresUrl = null;
 
       if (result.hires) {
         hiresUrl =
           await uploadToR2(
             result.hires,
-            `${timestamp}_hires_${result.masterSampleRate}.flac`,
-            "songs",
+            `${r2BaseName}_hires_${result.masterSampleRate}.flac`,
+            "songs/hires",
             "audio/flac"
           );
       }
 
       /*
       |--------------------------------------------------------------------------
-      | Preserve existing Flutter and Supabase field names
+      | Tunevora subscription mapping
       |--------------------------------------------------------------------------
       |
-      | free_audio_url:
+      | Free:
+      | AAC 64 kbps
+      |
+      | Standard:
       | AAC 128 kbps
       |
-      | standard_audio_url:
+      | Premium:
       | MP3 320 kbps
       |
-      | premium_audio_url:
-      | Hi-Res first, then Lossless, then MP3 fallback
+      | Lossless and Hi-Res remain separate verified fields.
       |
       */
 
       const freeAudioUrl =
-        aac128Url;
+        freeAac64Url;
 
       const standardAudioUrl =
-        mp3320Url;
+        standardAac128Url;
 
       const premiumAudioUrl =
-        hiresUrl ||
-        losslessUrl ||
-        mp3320Url;
+        premiumMp3320Url;
+
+      const totalRequestDurationMs =
+        Date.now() -
+        requestStartedAt;
 
       /*
       |--------------------------------------------------------------------------
-      | Return Cloudflare R2 URLs and master verification data
+      | Return R2 URLs and master verification data
       |--------------------------------------------------------------------------
       */
 
       return res.status(200).json({
         success: true,
 
+        upload_id:
+          uploadId,
+
+        message:
+          "Tunevora audio processing completed successfully",
+
         files: {
           /*
-           * Existing app-compatible fields.
+           * ------------------------------------------------------------
+           * Existing Flutter and Supabase fields
+           * ------------------------------------------------------------
            */
+
           free_audio_url:
             freeAudioUrl,
 
@@ -504,13 +906,19 @@ app.post(
             premiumAudioUrl,
 
           /*
-           * New permanent quality fields.
+           * ------------------------------------------------------------
+           * Permanent V2 quality URL fields
+           * ------------------------------------------------------------
            */
-          aac128_audio_url:
-            aac128Url,
 
-          mp3320_audio_url:
-            mp3320Url,
+          free_aac64_audio_url:
+            freeAac64Url,
+
+          standard_aac128_audio_url:
+            standardAac128Url,
+
+          premium_mp3320_audio_url:
+            premiumMp3320Url,
 
           lossless_audio_url:
             losslessUrl,
@@ -519,9 +927,24 @@ app.post(
             hiresUrl,
 
           /*
-           * Old Hi-Res fields retained temporarily
-           * for compatibility.
+           * ------------------------------------------------------------
+           * Compatibility aliases
+           * ------------------------------------------------------------
            */
+
+          aac64_audio_url:
+            freeAac64Url,
+
+          aac128_audio_url:
+            standardAac128Url,
+
+          mp3320_audio_url:
+            premiumMp3320Url,
+
+          /*
+           * Existing Hi-Res compatibility fields.
+           */
+
           hires48_audio_url:
             result.masterSampleRate ===
               48000
@@ -541,13 +964,23 @@ app.post(
               : null,
 
           /*
-           * Original master metadata.
+           * ------------------------------------------------------------
+           * Original master metadata
+           * ------------------------------------------------------------
            */
+
           master_format:
             result.masterFormat,
 
           master_codec:
             result.masterCodec,
+
+          master_codec_long_name:
+            result
+              .masterCodecLongName,
+
+          master_extension:
+            result.masterExtension,
 
           master_bit_depth:
             result.masterBitDepth,
@@ -559,17 +992,61 @@ app.post(
             result.masterChannels,
 
           master_channel_layout:
-            result.masterChannelLayout,
+            result
+              .masterChannelLayout,
 
           master_bit_rate:
             result.masterBitRate,
+
+          master_bit_rate_kbps:
+            result
+              .masterBitRateKbps,
+
+          master_file_size:
+            result.masterFileSize,
+
+          master_sha256:
+            result.masterSha256,
+
+          master_tags:
+            result.masterTags,
 
           duration_seconds:
             result.duration,
 
           /*
-           * Verification results.
+           * ------------------------------------------------------------
+           * Source verification
+           * ------------------------------------------------------------
            */
+
+          source_is_lossless:
+            result.sourceIsLossless,
+
+          source_is_lossy:
+            result.sourceIsLossy,
+
+          source_is_studio_master:
+            result
+              .sourceIsStudioMaster,
+
+          source_is_hires:
+            result.sourceIsHiRes,
+
+          premium_source_verified:
+            result
+              .premiumSourceVerified,
+
+          premium_source_reason:
+            result
+              .premiumSourceReason,
+
+          /*
+           * ------------------------------------------------------------
+           * Tunevora verification fields
+           * ------------------------------------------------------------
+           */
+
           verified_master:
             result.verifiedMaster,
 
@@ -580,20 +1057,65 @@ app.post(
             result.verifiedHiRes,
 
           verified_dolby_atmos:
-            result.verifiedDolbyAtmos,
+            result
+              .verifiedDolbyAtmos,
 
           verified_sony_360:
             result.verifiedSony360,
 
+          /*
+           * ------------------------------------------------------------
+           * Studio quality classification
+           * ------------------------------------------------------------
+           */
+
           studio_quality:
             result.studioQuality,
 
-          processing_version:
-            result.processingVersion,
+          studio_quality_label:
+            result
+              .studioQualityLabel,
+
+          studio_quality_rank:
+            result
+              .studioQualityRank,
 
           /*
-           * Future immersive audio fields.
+           * ------------------------------------------------------------
+           * Generated-version details
+           * ------------------------------------------------------------
            */
+
+          generated_qualities:
+            result
+              .generatedQualities,
+
+          /*
+           * ------------------------------------------------------------
+           * Processing information
+           * ------------------------------------------------------------
+           */
+
+          processing_version:
+            result
+              .processingVersion,
+
+          processing_duration_ms:
+            result
+              .processingDurationMs,
+
+          total_request_duration_ms:
+            totalRequestDurationMs,
+
+          processed_at:
+            result.processedAt,
+
+          /*
+           * ------------------------------------------------------------
+           * Future immersive audio fields
+           * ------------------------------------------------------------
+           */
+
           dolby_atmos_audio_url:
             null,
 
@@ -609,31 +1131,73 @@ app.post(
       });
     } catch (error) {
       console.error(
-        "❌ AUDIO CONVERSION ERROR:",
-        error
+        "========================================"
       );
 
-      return res.status(500).json({
-        success: false,
-        error: error.message,
+      console.error(
+        "❌ TUNEVORA AUDIO CONVERSION ERROR"
+      );
+
+      console.error({
+        uploadId,
+        message: error.message,
+        stack: error.stack,
       });
+
+      console.error(
+        "========================================"
+      );
+
+      const isClientError =
+        error.message.includes(
+          "Unsupported"
+        ) ||
+        error.message.includes(
+          "No audio"
+        ) ||
+        error.message.includes(
+          "empty"
+        ) ||
+        error.message.includes(
+          "invalid"
+        );
+
+      return res
+        .status(
+          isClientError
+            ? 400
+            : 500
+        )
+        .json({
+          success: false,
+
+          upload_id:
+            uploadId,
+
+          error:
+            createPublicError(
+              error,
+              "Audio processing failed"
+            ),
+        });
     } finally {
       /*
       |--------------------------------------------------------------------------
-      | Always remove temporary local files
+      | Always remove all local temporary files
       |--------------------------------------------------------------------------
-      |
-      | This runs after success and after failure.
-      |
       */
 
       if (result) {
         safeDeleteFile(
-          result.aac128
+          result.freeAac64
         );
 
         safeDeleteFile(
-          result.mp3320
+          result.standardAac128
+        );
+
+        safeDeleteFile(
+          result.premiumMp3320
         );
 
         safeDeleteFile(
@@ -642,6 +1206,23 @@ app.post(
 
         safeDeleteFile(
           result.hires
+        );
+
+        /*
+         * Compatibility file paths may point to the same files.
+         * safeDeleteFile checks existence before deleting.
+         */
+
+        safeDeleteFile(
+          result.aac64
+        );
+
+        safeDeleteFile(
+          result.aac128
+        );
+
+        safeDeleteFile(
+          result.mp3320
         );
       }
 
@@ -654,33 +1235,97 @@ app.post(
   }
 );
 
-/* ===================================================== */
-/* 🖼️ COVER UPLOAD AND WATERMARK                        */
-/* ===================================================== */
+/*
+|--------------------------------------------------------------------------
+| Cover upload and watermark
+|--------------------------------------------------------------------------
+*/
 
 app.post(
   "/upload-cover",
-  upload.single("cover"),
+  coverUpload.single("cover"),
   async (req, res) => {
     let outputPath = null;
 
-    try {
-      if (!req.file) {
-        return res.status(400).json({
-          success: false,
-          error: "No cover uploaded",
-        });
-      }
+    const uploadId =
+      createUploadId();
 
-      outputPath = path.join(
-        uploadsDirectory,
-        `watermarked_${Date.now()}.jpg`
+    try {
+      validateCoverUpload(
+        req.file
       );
 
+      const imageMetadata =
+        await sharp(
+          req.file.path
+        ).metadata();
+
+      const width =
+        imageMetadata.width || 0;
+
+      const height =
+        imageMetadata.height || 0;
+
+      if (
+        width <= 0 ||
+        height <= 0
+      ) {
+        throw new Error(
+          "Cover artwork dimensions could not be detected"
+        );
+      }
+
+      if (width !== height) {
+        throw new Error(
+          `Cover artwork must be square. Selected image: ${width} × ${height} px.`
+        );
+      }
+
+      if (
+        width < 1400 ||
+        height < 1400
+      ) {
+        throw new Error(
+          `Cover artwork must be at least 1400 × 1400 px. ` +
+          `Selected image: ${width} × ${height} px. ` +
+          "Recommended: 3000 × 3000 px."
+        );
+      }
+
+      console.log(
+        "🖼️ COVER UPLOAD RECEIVED:",
+        {
+          uploadId,
+
+          originalName:
+            req.file.originalname,
+
+          width,
+          height,
+
+          sizeBytes:
+            req.file.size,
+        }
+      );
+
+      outputPath =
+        path.join(
+          uploadsDirectory,
+          `watermarked_${uploadId}.jpg`
+        );
+
+      /*
+       * Preserve a high-quality square cover.
+       * Resize to 3000 × 3000 for consistent catalog artwork.
+       */
+
       await sharp(req.file.path)
-        .resize(1000, 1000, {
+        .rotate()
+        .resize(3000, 3000, {
           fit: "cover",
           position: "center",
+          withoutEnlargement:
+            false,
         })
         .composite([
           {
@@ -693,21 +1338,50 @@ app.post(
           },
         ])
         .jpeg({
-          quality: 90,
+          quality: 92,
+          chromaSubsampling:
+            "4:4:4",
+          progressive: true,
         })
         .toFile(outputPath);
+
+      if (!fileExists(outputPath)) {
+        throw new Error(
+          "Processed cover file was not created"
+        );
+      }
 
       const coverUrl =
         await uploadToR2(
           outputPath,
-          `cover_${Date.now()}.jpg`,
+          `cover_${uploadId}.jpg`,
           "covers",
           "image/jpeg"
         );
 
       return res.status(200).json({
         success: true,
-        cover_url: coverUrl,
+
+        upload_id:
+          uploadId,
+
+        cover_url:
+          coverUrl,
+
+        original_width:
+          width,
+
+        original_height:
+          height,
+
+        output_width:
+          3000,
+
+        output_height:
+          3000,
+
+        output_format:
+          "jpeg",
       });
     } catch (error) {
       console.error(
@@ -715,10 +1389,41 @@ app.post(
         error
       );
 
-      return res.status(500).json({
-        success: false,
-        error: error.message,
-      });
+      const isClientError =
+        error.message.includes(
+          "Unsupported"
+        ) ||
+        error.message.includes(
+          "square"
+        ) ||
+        error.message.includes(
+          "at least"
+        ) ||
+        error.message.includes(
+          "dimensions"
+        ) ||
+        error.message.includes(
+          "empty"
+        );
+
+      return res
+        .status(
+          isClientError
+            ? 400
+            : 500
+        )
+        .json({
+          success: false,
+
+          upload_id:
+            uploadId,
+
+          error:
+            createPublicError(
+              error,
+              "Cover processing failed"
+            ),
+        });
     } finally {
       if (req.file) {
         safeDeleteFile(
@@ -733,9 +1438,88 @@ app.post(
   }
 );
 
-/* ===================================================== */
-/* 🚀 SERVER STARTUP                                     */
-/* ===================================================== */
+/*
+|--------------------------------------------------------------------------
+| Multer error handler
+|--------------------------------------------------------------------------
+*/
+
+app.use(
+  (
+    error,
+    req,
+    res,
+    next
+  ) => {
+    if (
+      error instanceof
+      multer.MulterError
+    ) {
+      console.error(
+        "❌ MULTER ERROR:",
+        error
+      );
+
+      if (
+        error.code ===
+        "LIMIT_FILE_SIZE"
+      ) {
+        return res
+          .status(413)
+          .json({
+            success: false,
+
+            error:
+              "Uploaded file is larger than the permitted limit",
+          });
+      }
+
+      return res.status(400).json({
+        success: false,
+        error: error.message,
+      });
+    }
+
+    next(error);
+  }
+);
+
+/*
+|--------------------------------------------------------------------------
+| Final server error handler
+|--------------------------------------------------------------------------
+*/
+
+app.use(
+  (
+    error,
+    req,
+    res,
+    next
+  ) => {
+    console.error(
+      "❌ UNHANDLED SERVER ERROR:",
+      error
+    );
+
+    if (res.headersSent) {
+      return next(error);
+    }
+
+    return res.status(500).json({
+      success: false,
+
+      error:
+        "An unexpected server error occurred",
+    });
+  }
+);
+
+/*
+|--------------------------------------------------------------------------
+| Server startup
+|--------------------------------------------------------------------------
+*/
 
 const PORT =
   process.env.PORT || 3000;
@@ -744,18 +1528,48 @@ const server = app.listen(
   PORT,
   () => {
     console.log(
+      "========================================"
+    );
+
+    console.log(
       `🚀 Tunevora Audio Server running on port ${PORT}`
+    );
+
+    console.log(
+      `🧠 Server version: ${SERVER_VERSION}`
+    );
+
+    console.log(
+      `🎧 Processing version: ${PROCESSING_VERSION}`
     );
 
     console.log(
       `📁 Temporary upload directory: ${uploadsDirectory}`
     );
+
+    console.log(
+      "🎵 Free: AAC 64 kbps"
+    );
+
+    console.log(
+      "🎵 Standard: AAC 128 kbps"
+    );
+
+    console.log(
+      "🎵 Premium: MP3 320 kbps"
+    );
+
+    console.log(
+      "========================================"
+    );
   }
 );
 
-/* ===================================================== */
-/* 🛑 GRACEFUL SHUTDOWN                                  */
-/* ===================================================== */
+/*
+|--------------------------------------------------------------------------
+| Graceful shutdown
+|--------------------------------------------------------------------------
+*/
 
 let isShuttingDown = false;
 
@@ -796,10 +1610,44 @@ function gracefulShutdown(signal) {
   }, 10000).unref();
 }
 
-process.on("SIGTERM", () => {
-  gracefulShutdown("SIGTERM");
-});
+process.on(
+  "SIGTERM",
+  () => {
+    gracefulShutdown(
+      "SIGTERM"
+    );
+  }
+);
 
-process.on("SIGINT", () => {
-  gracefulShutdown("SIGINT");
-});
+process.on(
+  "SIGINT",
+  () => {
+    gracefulShutdown(
+      "SIGINT"
+    );
+  }
+);
+
+process.on(
+  "uncaughtException",
+  (error) => {
+    console.error(
+      "❌ UNCAUGHT EXCEPTION:",
+      error
+    );
+
+    gracefulShutdown(
+      "uncaughtException"
+    );
+  }
+);
+
+process.on(
+  "unhandledRejection",
+  (reason) => {
+    console.error(
+      "❌ UNHANDLED REJECTION:",
+      reason
+    );
+  }
+);
