@@ -48,7 +48,6 @@ const app = express();
 
 const SERVER_VERSION =
   "tunevora-audio-server-v2.0.0";
-
 /*
 |--------------------------------------------------------------------------
 | Express configuration
@@ -56,6 +55,107 @@ const SERVER_VERSION =
 */
 
 app.disable("x-powered-by");
+
+/*
+|--------------------------------------------------------------------------
+| CORS configuration for Flutter Web
+|--------------------------------------------------------------------------
+*/
+
+const productionOrigins = new Set([
+  "https://tunevora.com",
+  "https://www.tunevora.com",
+]);
+
+const additionalOrigins = String(
+  process.env.CORS_ALLOWED_ORIGINS || ""
+)
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
+for (const origin of additionalOrigins) {
+  productionOrigins.add(origin);
+}
+
+function isAllowedOrigin(origin) {
+  // Allow requests that do not come from a browser.
+  if (!origin) {
+    return true;
+  }
+
+  if (productionOrigins.has(origin)) {
+    return true;
+  }
+
+  // Allow localhost for Flutter Web development.
+  try {
+    const url = new URL(origin);
+
+    return (
+      url.protocol === "http:" &&
+      (
+        url.hostname === "localhost" ||
+        url.hostname === "127.0.0.1"
+      )
+    );
+  } catch (_) {
+    return false;
+  }
+}
+
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+
+  if (origin && isAllowedOrigin(origin)) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Vary", "Origin");
+  }
+
+  res.setHeader(
+    "Access-Control-Allow-Methods",
+    "GET,POST,PUT,PATCH,DELETE,OPTIONS"
+  );
+
+  res.setHeader(
+    "Access-Control-Allow-Headers",
+    [
+      "Origin",
+      "Content-Type",
+      "Accept",
+      "Authorization",
+      "X-Requested-With",
+    ].join(", ")
+  );
+
+  res.setHeader("Access-Control-Max-Age", "86400");
+
+  if (req.method === "OPTIONS") {
+    if (origin && !isAllowedOrigin(origin)) {
+      return res.status(403).json({
+        success: false,
+        error: "Origin is not allowed",
+      });
+    }
+
+    return res.sendStatus(204);
+  }
+
+  if (origin && !isAllowedOrigin(origin)) {
+    return res.status(403).json({
+      success: false,
+      error: "Origin is not allowed",
+    });
+  }
+
+  return next();
+});
+
+/*
+|--------------------------------------------------------------------------
+| Request body configuration
+|--------------------------------------------------------------------------
+*/
 
 app.use(
   express.json({
@@ -79,7 +179,6 @@ app.use(
 | Create it before Multer starts handling uploads.
 |
 */
-
 const uploadsDirectory = path.join(
   __dirname,
   "uploads"
