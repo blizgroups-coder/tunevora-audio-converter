@@ -10,6 +10,9 @@ const {
 const {
   uploadToR2,
 } = require("./r2Service");
+const {
+  compressAdVideo,
+} = require("./adVideoService");
 
 const express = require("express");
 const multer = require("multer");
@@ -200,6 +203,9 @@ const MAX_AUDIO_UPLOAD_SIZE =
 const MAX_COVER_UPLOAD_SIZE =
   15 * 1024 * 1024;
 
+const MAX_AD_VIDEO_UPLOAD_SIZE =
+  150 * 1024 * 1024;
+
 const upload = multer({
   dest: uploadsDirectory,
 
@@ -219,6 +225,16 @@ const coverUpload = multer({
     files: 1,
   },
 });
+
+const adVideoUpload = multer({
+  dest: uploadsDirectory,
+  limits: {
+    fileSize:
+      MAX_AD_VIDEO_UPLOAD_SIZE,
+    files: 1,
+  },
+});
+
 
 /*
 |--------------------------------------------------------------------------
@@ -247,6 +263,12 @@ const SUPPORTED_COVER_EXTENSIONS =
     ".jpeg",
     ".png",
     ".webp",
+  ]);
+
+
+const SUPPORTED_AD_VIDEO_EXTENSIONS =
+  new Set([
+    ".mp4",
   ]);
 
 /*
@@ -332,6 +354,41 @@ function validateAudioUpload(file) {
   ) {
     throw new Error(
       "Uploaded audio file is empty or unavailable"
+    );
+  }
+
+  return true;
+}
+
+function validateAdVideoUpload(file) {
+  if (!file) {
+    throw new Error(
+      "No video ad file was uploaded"
+    );
+  }
+
+  const extension =
+    getFileExtension(
+      file.originalname
+    );
+
+  if (
+    !SUPPORTED_AD_VIDEO_EXTENSIONS
+      .has(extension)
+  ) {
+    throw new Error(
+      `Unsupported video ad format: ${
+        extension || "unknown"
+      }`
+    );
+  }
+
+  if (
+    !fileExists(file.path) ||
+    file.size <= 0
+  ) {
+    throw new Error(
+      "Uploaded video ad file is empty or unavailable"
     );
   }
 
@@ -1322,6 +1379,150 @@ app.post(
 
         safeDeleteFile(
           result.mp3320
+        );
+      }
+
+      if (req.file) {
+        safeDeleteFile(
+          req.file.path
+        );
+      }
+    }
+  }
+);
+
+/*
+|--------------------------------------------------------------------------
+| Video ad upload and compression
+|--------------------------------------------------------------------------
+*/
+
+app.post(
+  "/upload-ad-video",
+  adVideoUpload.single("video"),
+  async (req, res) => {
+    let processedVideo = null;
+    const uploadId =
+      createUploadId();
+
+    try {
+      validateAdVideoUpload(
+        req.file
+      );
+
+      console.log(
+        "========================================"
+      );
+      console.log(
+        "VIDEO AD UPLOAD RECEIVED"
+      );
+      console.log({
+        uploadId,
+        originalName:
+          req.file.originalname,
+        sizeBytes:
+          req.file.size,
+      });
+      console.log(
+        "========================================"
+      );
+
+      processedVideo =
+        await compressAdVideo(
+          req.file.path
+        );
+
+      const safeBaseName =
+        sanitizeFileName(
+          path.basename(
+            req.file.originalname,
+            path.extname(
+              req.file.originalname
+            )
+          )
+        );
+
+      const videoUrl =
+        await uploadToR2(
+          processedVideo.outputPath,
+          `${uploadId}_${safeBaseName}.mp4`,
+          "ads/video",
+          "video/mp4"
+        );
+
+      return res.status(200).json({
+        success: true,
+        upload_id:
+          uploadId,
+        video_url:
+          videoUrl,
+        files: {
+          video_url:
+            videoUrl,
+        },
+        metadata: {
+          duration_seconds:
+            processedVideo.duration,
+          source_width:
+            processedVideo.width,
+          source_height:
+            processedVideo.height,
+          source_video_codec:
+            processedVideo.videoCodec,
+          source_audio_codec:
+            processedVideo.audioCodec,
+          source_has_audio:
+            processedVideo.hasAudio,
+          source_bit_rate:
+            processedVideo.sourceBitRate,
+          output_size_bytes:
+            processedVideo.outputSizeBytes,
+        },
+      });
+    } catch (error) {
+      console.error(
+        "VIDEO AD PROCESSING ERROR",
+        {
+          uploadId,
+          message:
+            error.message,
+        }
+      );
+
+      const message =
+        String(
+          error.message || ""
+        );
+
+      const isClientError =
+        message.includes("Unsupported") ||
+        message.includes("No video") ||
+        message.includes("empty") ||
+        message.includes("Invalid") ||
+        message.includes("invalid") ||
+        message.includes("duration") ||
+        message.includes("between 1 and 30");
+
+      return res
+        .status(
+          isClientError
+            ? 400
+            : 500
+        )
+        .json({
+          success: false,
+          upload_id:
+            uploadId,
+          error:
+            createPublicError(
+              error,
+              "Video ad processing failed"
+            ),
+        });
+    } finally {
+      if (processedVideo) {
+        safeDeleteFile(
+          processedVideo.outputPath
         );
       }
 
